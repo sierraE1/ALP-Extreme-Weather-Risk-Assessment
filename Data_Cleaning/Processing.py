@@ -123,6 +123,8 @@ def load_csv(path: str) -> pd.DataFrame:
 
     if "Start Date" in df.columns:
         df["Year"] = df["Start Date"].dt.year
+        # Keep only 2000–2026 for analysis
+        df = df[df["Year"].between(2000, 2026)]
     if "Start Date" in df.columns and "End Date" in df.columns:
         df["Duration (days)"] = (df["End Date"] - df["Start Date"]).dt.days
 
@@ -150,6 +152,9 @@ def load_parquet(path: str) -> pd.DataFrame:
     if "start_date" in df.columns:
         df["Year"]  = df["start_date"].dt.year
         df["Month"] = df["start_date"].dt.month
+
+        # Keep only 2000–2026
+        df = df[(df["Year"] >= 2000) & (df["Year"] <= 2026)]
 
     if "start_date" in df.columns and "end_date" in df.columns:
         df["Duration (days)"] = (df["end_date"] - df["start_date"]).dt.days.clip(lower=0)
@@ -321,6 +326,8 @@ def plot_combined_comparison(csv_df: pd.DataFrame, parquet_df: pd.DataFrame):
     ax = axes[0]
     if "Year" in csv_df.columns and "Year" in parquet_df.columns:
         csv_yr = csv_df.groupby("Year").size()
+        # Keep only 2000–2026 for fair comparison 
+        parquet_df = parquet_df[parquet_df["Year"].between(2000, 2026)]
         par_yr = parquet_df.groupby("Year").size()
         all_years = sorted(set(csv_yr.index) | set(par_yr.index))
         ax.plot(all_years, [csv_yr.get(y, 0) for y in all_years],

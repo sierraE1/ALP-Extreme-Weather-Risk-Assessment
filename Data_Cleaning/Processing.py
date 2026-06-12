@@ -123,10 +123,16 @@ def load_csv(path: str) -> pd.DataFrame:
 
     if "Start Date" in df.columns:
         df["Year"] = df["Start Date"].dt.year
+        df["Month"] = df["Start Date"].dt.month
         # Keep only 2000–2026 for analysis
         df = df[df["Year"].between(2000, 2026)]
+    if "Country" in df.columns:
+        df = df[df["Country"] == "United States of America"]
     if "Start Date" in df.columns and "End Date" in df.columns:
-        df["Duration (days)"] = (df["End Date"] - df["Start Date"]).dt.days
+        # Offset by 1 so the minimum duration is 1 day instead of 0.
+        df["Duration (days)"] = (
+            (df["End Date"] - df["Start Date"]).dt.days.fillna(0).clip(lower=0) + 1
+        )
 
     if "Main Cause" in df.columns:
         df["Main Cause"] = df["Main Cause"].str.strip().str.title()
@@ -157,9 +163,50 @@ def load_parquet(path: str) -> pd.DataFrame:
         df = df[(df["Year"] >= 2000) & (df["Year"] <= 2026)]
 
     if "start_date" in df.columns and "end_date" in df.columns:
-        df["Duration (days)"] = (df["end_date"] - df["start_date"]).dt.days.clip(lower=0)
+        # Offset by 1 so the minimum duration is 1 day instead of 0.
+        df["Duration (days)"] = (
+            (df["end_date"] - df["start_date"]).dt.days.fillna(0).clip(lower=0) + 1
+        )
 
     print(f"[Parquet] Loaded {len(df):,} rows  |  cols: {list(df.columns)}")
+
+        #debug
+    print("Rows:", len(df))
+    print("Zero area:", (df["area_km2"] == 0).sum())
+    print("Null area:", df["area_km2"].isna().sum())
+
+    print(df["area_km2"].describe())
+
+    print(
+        df["area_km2"]
+        .value_counts(dropna=False)
+        .head(20)
+    )
+    zero_area = df[df["area_km2"] == 0]
+
+    print("Zero-area rows:", len(zero_area))
+
+    print(zero_area[[
+        "uuid",
+        "area_km2",
+        "start_date",
+        "end_date"
+    ]].head())
+    zero_area = df[df["area_km2"] == 0]
+
+    print(
+        "Zero-area rows with geometry:",
+        zero_area["geometry"].notna().sum()
+    )
+
+    print(
+        "Total zero-area rows:",
+        len(zero_area)
+    )
+    print("Zeroes:", (df["area_km2"] == 0).sum())
+    print("Percent zero:",
+        100 * (df["area_km2"] == 0).mean())
+
     return df
 
 
@@ -191,34 +238,55 @@ def plot_csv_overview(df: pd.DataFrame):
            autopct="%1.1f%%", startangle=140)
     ax.set_title("Impact Tier Distribution")
 
-    # 3. Top 10 countries
-    ax = fig.add_subplot(gs[1, :2])
-    top = df["Country"].value_counts().head(10)
-    ax.barh(top.index[::-1], top.values[::-1], color="#0288D1")
-    ax.set_title("Top 10 Countries by Flood Events"); ax.set_xlabel("Events")
+    # 3. Monthly seasonality
+    ax = fig.add_subplot(gs[0, 2])
+    if "Month" in df.columns:
+        monthly = df.groupby("Month").size()
+        month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        ax.bar(range(1, 13), [monthly.get(m, 0) for m in range(1, 13)],
+               color="#F57C00", edgecolor="white", alpha=0.9)
+        ax.set_xticks(range(1, 13)); ax.set_xticklabels(month_labels, fontsize=7)
+        ax.set_title("Monthly Seasonality")
+        ax.set_xlabel("Month"); ax.set_ylabel("Events")
 
     # 4. Main causes
-    ax = fig.add_subplot(gs[1, 2])
+    ax = fig.add_subplot(gs[1, :2])
     causes = df["Main Cause"].value_counts().head(8)
     ax.barh(causes.index[::-1], causes.values[::-1], color="#7B1FA2", alpha=0.85)
     ax.set_title("Main Causes (Top 8)"); ax.set_xlabel("Events")
     ax.tick_params(axis="y", labelsize=7)
 
-    # 5. Fatalities by severity
+    # 5. Area vs duration
+    ax = fig.add_subplot(gs[1, 2])
+    area_mask = (df["area_km2"] > 0) & df["Duration (days)"].notna()
+    scatter_data = df[area_mask].copy()
+    ax.scatter(
+        np.log1p(scatter_data["area_km2"]),
+        scatter_data["Duration (days)"],
+        c="#1976D2",
+        alpha=0.25,
+        s=10,
+    )
+    ax.set_title("log(Area km²) vs Duration")
+    ax.set_xlabel("log(Area km²)"); ax.set_ylabel("Duration (days)")
+
+    # 6. Fatalities by severity
     ax = fig.add_subplot(gs[2, 0])
     sub = df[df["Fatalities"] > 0]
     sns.boxplot(data=sub, x="Severity", y="Fatalities", palette="Oranges", ax=ax)
     ax.set_yscale("log"); ax.set_title("Fatalities by Severity (log)")
 
-    # 6. Displaced by severity
+    # 7. Displaced by severity
     ax = fig.add_subplot(gs[2, 1])
     sub = df[df["Displaced"] > 0]
     sns.boxplot(data=sub, x="Severity", y="Displaced", palette="Blues", ax=ax)
     ax.set_yscale("log"); ax.set_title("Displaced by Severity (log)")
 
-    # 7. Area vs impact index
+    # 8. Area vs impact index
     ax = fig.add_subplot(gs[2, 2])
     mask = (df["area_km2"] > 0) & df["Flood impact index"].notna()
+    scatter_data = df[area_mask].copy()
     scatter_data = df[mask].copy()
     scatter_data["impact_tier"] = pd.cut(
         scatter_data["Flood impact index"],
@@ -397,7 +465,7 @@ def print_summary(df: pd.DataFrame, label: str):
     num_cols = [c for c in ["area_km2","Duration (days)","Fatalities","Displaced",
                              "Flood impact index","Severity"] if c in df.columns]
     if num_cols:
-        print(f"\n  Numeric stats:\n{df[num_cols].describe().round(1).to_string()}")
+        print(f"\n  Numeric stats:\n{df[num_cols].describe().round(5).to_string()}")
 
 
 # ─────────────────────────── MAIN ─────────────────────────────────────────────

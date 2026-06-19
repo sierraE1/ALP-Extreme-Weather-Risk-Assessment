@@ -216,7 +216,7 @@ def plot_csv_overview(df: pd.DataFrame):
     fig = plt.figure(figsize=(20, 13))
     fig.suptitle("Global Flood Records (CSV) – Trend Overview",
                  fontsize=16, fontweight="bold", y=0.98)
-    gs = gridspec.GridSpec(3, 3, figure=fig, hspace=0.48, wspace=0.35)
+    gs = gridspec.GridSpec(3, 4, figure=fig, hspace=0.48, wspace=0.35)
 
     # 1. Events per year
     ax = fig.add_subplot(gs[0, :2])
@@ -239,7 +239,7 @@ def plot_csv_overview(df: pd.DataFrame):
     ax.set_title("Impact Tier Distribution")
 
     # 3. Monthly seasonality
-    ax = fig.add_subplot(gs[0, 2])
+    ax = fig.add_subplot(gs[0, 3])
     if "Month" in df.columns:
         monthly = df.groupby("Month").size()
         month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -258,7 +258,7 @@ def plot_csv_overview(df: pd.DataFrame):
     ax.tick_params(axis="y", labelsize=7)
 
     # 5. Area vs duration
-    ax = fig.add_subplot(gs[1, 2])
+    ax = fig.add_subplot(gs[1, 2:])
     area_mask = (df["area_km2"] > 0) & df["Duration (days)"].notna()
     scatter_data = df[area_mask].copy()
     ax.scatter(
@@ -284,7 +284,7 @@ def plot_csv_overview(df: pd.DataFrame):
     ax.set_yscale("log"); ax.set_title("Displaced by Severity (log)")
 
     # 8. Area vs impact index
-    ax = fig.add_subplot(gs[2, 2])
+    ax = fig.add_subplot(gs[2, 2:])
     mask = (df["area_km2"] > 0) & df["Flood impact index"].notna()
     scatter_data = df[area_mask].copy()
     scatter_data = df[mask].copy()
@@ -327,11 +327,6 @@ def plot_parquet_overview(df: pd.DataFrame):
         ax.set_title("Flood Events per Year (Groundsource)")
         ax.set_xlabel("Year"); ax.set_ylabel("Count")
         ax.tick_params(axis="x", rotation=45)
-        # Annotate recency bias note from paper
-        ax.annotate("~64% of events 2020–2025\n(reflects media growth, not flood increase)",
-                    xy=(0.98, 0.92), xycoords="axes fraction",
-                    ha="right", fontsize=7, color="gray",
-                    bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7))
 
     # 2. Cluster pie (spatiotemporal tiers)
     ax = fig.add_subplot(gs[0, 2])
@@ -423,10 +418,6 @@ def plot_combined_comparison(csv_df: pd.DataFrame, parquet_df: pd.DataFrame):
     ax.set_title("log(Area km²) — Normalized")
     ax.set_xlabel("log(Area km²)"); ax.set_ylabel("Density")
     ax.legend(fontsize=8)
-    ax.annotate("Groundsource filters\nevents >5,000 km²\n(per paper §2.4)",
-                xy=(0.97, 0.92), xycoords="axes fraction", ha="right",
-                fontsize=7, color="gray",
-                bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7))
 
     # 3. Duration distribution — side by side
     ax = axes[2]
@@ -439,10 +430,6 @@ def plot_combined_comparison(csv_df: pd.DataFrame, parquet_df: pd.DataFrame):
     ax.set_title("Event Duration — Normalized")
     ax.set_xlabel("Days"); ax.set_ylabel("Density")
     ax.legend(fontsize=8)
-    ax.annotate("Groundsource caps\nevents at 7 days\n(per paper §2.4)",
-                xy=(0.97, 0.92), xycoords="axes fraction", ha="right",
-                fontsize=7, color="gray",
-                bbox=dict(boxstyle="round,pad=0.3", fc="white", alpha=0.7))
 
     plt.tight_layout()
     out = OUTPUT_DIR / "combined_comparison.png"

@@ -4,7 +4,7 @@ This folder contains the flood map website.
 
 ## Work log
 
-Here is a simple record of what I did to process the data and make the diagrams.
+Here is a record of what I did to process the data and make the diagrams.
 
 1. I opened the flood data and cleaned it in Python.
 2. I fixed the date fields, area values, and column names so the data was easier to use.
@@ -14,21 +14,52 @@ Here is a simple record of what I did to process the data and make the diagrams.
 6. I made bar charts for yearly and monthly patterns, scatter plots for area and duration, and box plots for severity comparisons.
 7. I used these Python packages for the charts and data work: `pandas`, `numpy`, `matplotlib`, `seaborn`, `pyarrow`, `scikit-learn`, and `shapely`.
 8. I saved the finished charts into the output folder.
-9. I removed extra notes from the charts so the final images looked cleaner.
 
 ## Result
 
 The final output is a set of flood analysis charts that show trends, seasonality, causes, and comparisons between the datasets.
 
-## Very beginner friendly setup guide
-
-This is the easiest way to run the website.
+## Setup guide
 
 ### What you need
 
-- A computer with Node.js installed
 - VS Code
-- Internet access for installing the project files
+- Node.js installed --> https://nodejs.org/en/download
+
+
+
+
+## Backend folder
+
+This is the part that makes the data visualizations.
+
+### Step 1: Open the backend folder
+
+Open the `Data_Cleaning` folder in VS Code.
+
+### Step 2: Open the terminal
+
+In VS Code, open the terminal from the top menu.
+
+### Step 3: Run the Python script
+
+Type this command and press Enter:
+
+```bash
+python Processing.py
+```
+
+### Step 4: Wait for the charts
+
+The script will clean the data and create the chart images in the output folder.
+
+
+
+
+
+### Frontend folder
+
+This is the part that makes runs the GitHub pages map visualization.
 
 ### Step 1: Open the folder
 

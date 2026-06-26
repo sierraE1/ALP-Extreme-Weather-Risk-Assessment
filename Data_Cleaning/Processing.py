@@ -29,17 +29,21 @@ import warnings
 warnings.filterwarnings("ignore")
 
 import pandas as pd
+import geopandas as gpd
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
 from pathlib import Path
+import json
+from shapely import wkt, wkb
 
 # ─────────────────────────── CONFIGURATION ────────────────────────────────────
 # Resolve data relative to this script, not the current terminal folder.
 BASE_DIR     = Path(__file__).resolve().parent
-CSV_PATH     = BASE_DIR / "Global_Flood_Records.csv"
+CSV_PATH     = BASE_DIR / "FloodArchive_1985_2021.xlsx"
 PARQUET_PATH = BASE_DIR / "groundsource_2026.parquet"
+GPKG_PATH    = BASE_DIR / "Global_Flood_Records.gpkg"  # For inspection/debugging only
 OUTPUT_DIR   = BASE_DIR / "flood_analysis_output"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -59,6 +63,33 @@ PALETTE = {
     "High Impact":      "#F44336",
 }
 
+def export_to_react(df: pd.DataFrame, output_path: str):
+    """
+    Converts the processed dataframe into a JSON format for the React frontend.
+    Assumes your dataframe has names/locations or lat/lng coordinates extracted.
+    """
+    # 1. Extract lat/lng if you haven't already. 
+    # (If using WKT polygons from geometry, you might extract the centroid)
+    # Example assuming columns 'lat' and 'lng' exist or are parsed:
+    
+    react_points = []
+    for _, row in df.iterrows():
+        # Build an object that conforms to your frontend's MapPoint type
+        point_data = {
+            "id": str(row.get("uuid", row.name)),
+            "name": f"Flood Event {row.get('uuid', row.name)[:6]}", # Custom label
+            "lat": float(row.get("lat", 39.8)),   # Swap with actual lat parsing
+            "lng": float(row.get("lng", -98.5)),  # Swap with actual lng parsing
+            "city": "Unknown City",              # Add if available
+            "state": "USA",
+            "description": f"Area: {row['area_km2']} km², Duration: {row['Duration (days)']} days"
+        }
+        react_points.append(point_data)
+        
+    # Save directly into your React project's data directory
+    with open(output_path, "w") as f:
+        json.dump(react_points, f, indent=2)
+    print(f"Exported data to {output_path}")
 # ─────────────────────────── HELPERS ──────────────────────────────────────────
 
 def _cluster_score(area_km2, duration_days):
@@ -140,6 +171,53 @@ def load_csv(path: str) -> pd.DataFrame:
     print(f"[CSV]     Loaded {len(df):,} rows")
     return df
 
+def load_flood_xlsx(path):
+    df = pd.read_excel(path)
+
+    # Rename columns if the spreadsheet doesn't already have headers
+    df.columns = [
+        "Event ID",
+        "Unknown1",
+        "Country",
+        "Unknown2",
+        "Longitude",
+        "Latitude",
+        "Area (km2)",
+        "Start Date",
+        "End Date",
+        "Source",
+        "Fatalities",
+        "Displaced",
+        "Main Cause",
+        "Severity"
+    ]
+
+    # Convert dates
+    df["Start Date"] = pd.to_datetime(df["Start Date"])
+    df["End Date"] = pd.to_datetime(df["End Date"])
+
+    # Calculate duration
+    df["Duration (days)"] = (
+        df["End Date"] - df["Start Date"]
+    ).dt.days + 1
+
+    # Add year
+    df["Year"] = df["Start Date"].dt.year
+
+    # Convert numeric columns
+    numeric_cols = [
+        "Longitude",
+        "Latitude",
+        "Area (km2)",
+        "Fatalities",
+        "Displaced",
+        "Severity"
+    ]
+
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df
 
 def load_parquet(path: str) -> pd.DataFrame:
     """
@@ -209,6 +287,29 @@ def load_parquet(path: str) -> pd.DataFrame:
 
     return df
 
+def inspect_gpkg(path, max_rows=3):
+    print("Inspecting GPKG:", path)
+
+    # read file and extract layers using geopandas only
+    gdf = gpd.read_file(path)
+
+    print("\nColumns:")
+    print(list(gdf.columns))
+
+    print("\nCRS:")
+    print(gdf.crs)
+
+    print("\nRows:")
+    print(len(gdf))
+
+    print("\nSample:")
+    print(gdf.head(max_rows))
+
+    return {
+        "columns": list(gdf.columns),
+        "crs": str(gdf.crs),
+        "rows": len(gdf)
+    }
 
 # ─────────────────────────── CSV PLOTS ────────────────────────────────────────
 
@@ -437,6 +538,134 @@ def plot_combined_comparison(csv_df: pd.DataFrame, parquet_df: pd.DataFrame):
     print(f"  → {out}")
     plt.close()
 
+# ─────────────────────────── CROSS-REFERENCING (2011) ────────────────────────────────────
+
+def is_us_coordinate(lat, lng):
+    # Continental US
+    if 24 <= lat <= 49.5 and -125 <= lng <= -66.9:
+        return True
+
+    # Alaska
+    if 51 <= lat <= 72 and -170 <= lng <= -129:
+        return True
+
+    # Hawaii
+    if 18 <= lat <= 23 and -161 <= lng <= -154:
+        return True
+
+    return False
+
+def mesh_2011_datasets(csv_df, parquet_df, output_path):
+    print("Cross-referencing and meshing 2011 datasets...")
+    
+    xlsx_df = load_flood_xlsx(CSV_PATH)
+    # 1. Filter both datasets for 2011
+    # (Assuming both dataframes already have a 'Year' column from your script)
+    csv_2011 = xlsx_df[xlsx_df['Year'] == 2011].copy()
+    parquet_2011 = parquet_df[parquet_df['Year'] == 2011].copy()
+    
+    # Ensure they are filtered for the US (Adjust if your CSV uses 'Country' column)
+    if 'Country' in csv_2011.columns:
+        csv_2011 = csv_2011[csv_2011['Country'].str.contains('United States|USA', case=False, na=False)]
+
+    meshed_points = []
+
+    # 2. Iterate through Parquet spatial polygons to find matching CSV event rows
+    for p_idx, p_row in parquet_2011.iterrows():
+        p_start = pd.to_datetime(p_row['start_date'])
+        p_end = pd.to_datetime(p_row['end_date'])
+        geom = p_row['geometry']
+        if pd.isna(geom):
+            continue
+            
+        try:
+            if isinstance(geom, str):
+                poly = wkt.loads(geom)
+            else:
+                poly = wkb.loads(geom) # Parses binary format
+                
+            centroid = poly.centroid
+            lat, lng = centroid.y, centroid.x
+            # Skip any flood polygon outside the US
+            if not is_us_coordinate(lat, lng):
+                continue
+        except Exception as e:
+            # Print only once to avoid spamming the terminal
+            if len(meshed_points) == 0: 
+                print(f"⚠️ Geometry parsing error preview: {e}")
+            continue 
+            
+        # --- WIDENED TEMPORAL MATCH (4 days) ---
+        # Satellite data (Parquet) and human reports (CSV) rarely share exact start dates.
+        # Expanding the buffer to +/- 4 days catches overlapping events much better.
+        time_match = csv_2011[
+            (pd.to_datetime(csv_2011['Start Date']) <= p_end + pd.Timedelta(days=4)) &
+            (pd.to_datetime(csv_2011['End Date']) >= p_start - pd.Timedelta(days=4))
+        ]
+        # FIX: If it doesn't match a US CSV record, skip it entirely 
+        # This keeps foreign data points from leaking onto your map
+        if time_match.empty:
+            continue
+        
+        warnings = []
+        has_match = False
+        csv_details = {}
+        
+        if not time_match.empty:
+            # Match found! Take the closest or first matching event record
+            match_row = time_match.iloc[0]
+            has_match = True
+            
+            # Cross-reference shared parameters for verification warnings
+            # Check 1: Duration Discrepancy
+            p_dur = p_row['Duration (days)']
+            c_dur = match_row['Duration (days)']
+            if abs(p_dur - c_dur) > 2:
+                warnings.append(f"Duration mismatch: Parquet reports {p_dur} days, CSV reports {c_dur} days.")
+                
+            # Check 2: Area Discrepancy
+            p_area = p_row['area_km2']
+            c_area = match_row['area_km2']
+            if c_area > 0 and (abs(p_area - c_area) / c_area) > 0.5:
+                warnings.append(f"Significant footprint area discrepancy detected.")
+                
+            # Collect human impact metrics unique to the CSV file
+            csv_details = {
+                "main_cause": str(match_row.get("Main Cause", "Unknown")),
+                "fatalities": int(match_row.get("Fatalities", 0)),
+                "displaced": int(match_row.get("Displaced", 0)),
+                "severity": float(match_row.get("Severity", 0.0))
+            }
+
+        # 3. Consolidate into a unified object matching React's schema
+        unified_point = {
+            "id": str(p_row.get("uuid", p_idx)),
+            "name": f"Flood Event {p_idx}",
+            "lat": float(lat),
+            "lng": float(lng),
+            "city": str(match_row.get("City", "Regional Tracker")) if has_match else "Unmapped Region",
+            "state": str(match_row.get("State", "USA")) if has_match else "USA",
+            "source_flags": {
+                "in_parquet": True,
+                "in_csv": has_match,
+                "warnings": warnings
+            },
+            "metrics": {
+                "parquet_area_km2": float(p_row['area_km2']),
+                "csv_area_km2": float(match_row['area_km2']) if has_match else None,
+                "parquet_duration_days": int(p_row['Duration (days)']),
+                "csv_duration_days": int(match_row['Duration (days)']) if has_match else None,
+                "fatalities": csv_details.get("fatalities", None),
+                "displaced": csv_details.get("displaced", None),
+                "cluster_tier": str(p_row['Cluster'])
+            }
+        }
+        meshed_points.append(unified_point)
+
+    # Export out the compiled list
+    with open(output_path, "w") as f:
+        json.dump(meshed_points, f, indent=2)
+    print(f"✓ Created unified dataset with {len(meshed_points)} events written to {output_path}")
 
 # ─────────────────────────── SUMMARY ──────────────────────────────────────────
 
@@ -475,6 +704,8 @@ def main():
 
     # ── Parquet ────────────────────────────────────────────────────────────────
     parquet_df = None
+    REACT_CSV_OUTPUT     = BASE_DIR / "react-app" / "src" / "data" / "points_csv.json"
+    REACT_PARQUET_OUTPUT = BASE_DIR / "react-app" / "src" / "data" / "points_parquet.json"
     if Path(PARQUET_PATH).exists():
         parquet_df = load_parquet(PARQUET_PATH)
         parquet_df = assign_clusters(parquet_df)
@@ -487,6 +718,17 @@ def main():
 
     # ── Combined ───────────────────────────────────────────────────────────────
     if csv_df is not None and parquet_df is not None:
+        # 1. Use BASE_DIR to navigate into the Frontend folder dynamically
+        # (This assumes Processing.py is in the 'Map_Visualization' folder alongside 'Frontend')
+        PROJECT_ROOT = BASE_DIR.parent
+        REACT_DATA_DIR = PROJECT_ROOT / "Map_Visualization" / "Frontend" / "src" / "data"
+        # Optional but recommended: Create the directory if it doesn't exist yet
+        REACT_DATA_DIR.mkdir(parents=True, exist_ok=True)
+        # 2. Append the filename
+        UNIFIED_2011_OUTPUT = REACT_DATA_DIR / "points_2011.json"
+
+        # 3. Run the export
+        mesh_2011_datasets(csv_df, parquet_df, UNIFIED_2011_OUTPUT)
         print("\n  Generating combined comparison chart…")
         plot_combined_comparison(csv_df, parquet_df)
 

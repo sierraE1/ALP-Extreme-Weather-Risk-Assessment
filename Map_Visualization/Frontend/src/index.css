@@ -164,3 +164,70 @@ h1 {
     min-height: 420px;
   }
 }
+/* Sidebar Layout Card */
+.sidebar-card {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+/* Control Panel for Filters */
+.control-panel {
+  margin-bottom: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.search-input,
+.sort-select {
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 4px;
+  font-family: inherit;
+}
+
+/* Scrollable List Container */
+.point-list {
+  max-height: 60vh;
+  overflow-y: auto;
+  padding-right: 4px;
+  list-style: none;
+  margin: 0;
+  padding-left: 0;
+}
+
+.point-item {
+  margin-bottom: 4px;
+}
+
+/* Sidebar Navigation Buttons */
+.point-button {
+  width: 100%;
+  text-align: left;
+  padding: 10px;
+  background: #f8fafc;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  cursor: pointer;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.point-button.active {
+  background: #eff6ff;
+  border-color: #3b82f6;
+}
+
+/* Leaflet Popup Styling */
+.popup-content {
+  font-family: inherit;
+  line-height: 1.4;
+}
+
+.popup-divider {
+  margin: 6px 0;
+  border: 0;
+  border-top: 1px solid #e2e8f0;
+}

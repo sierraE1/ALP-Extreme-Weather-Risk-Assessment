@@ -41,8 +41,10 @@ from shapely import wkt, wkb
 # ─────────────────────────── CONFIGURATION ────────────────────────────────────
 # Resolve data relative to this script, not the current terminal folder.
 BASE_DIR     = Path(__file__).resolve().parent
-CSV_PATH     = BASE_DIR / "FloodArchive_1985_2021.xlsx"
+CSV_PATH     = BASE_DIR / "Global_Flood_Records.csv"
 PARQUET_PATH = BASE_DIR / "groundsource_2026.parquet"
+XLSX_PATH    = BASE_DIR / "FloodArchive_1985_2021.xlsx"
+
 GPKG_PATH    = BASE_DIR / "Global_Flood_Records.gpkg"  # For inspection/debugging only
 OUTPUT_DIR   = BASE_DIR / "flood_analysis_output"
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -216,6 +218,7 @@ def load_flood_xlsx(path):
 
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
+    df["area_km2"] = df["Area (km2)"]
 
     return df
 
@@ -474,6 +477,99 @@ def plot_parquet_overview(df: pd.DataFrame):
     print(f"  → {out}")
     plt.close()
 
+# ─────────────────────────── XLSX OVERVIEW ────────────────────────────────────
+
+def plot_xlsx_overview(df: pd.DataFrame):
+    """
+    Global Flood Records (XLSX) overview — mirrors plot_csv_overview() layout,
+    but uses this dataset's actual columns: Fatalities, Displaced, Main Cause,
+    Severity (no 'Flood impact index' here).
+    """
+    fig = plt.figure(figsize=(20, 13))
+    fig.suptitle("Global Flood Records (XLSX) – Trend Overview",
+                 fontsize=16, fontweight="bold", y=0.98)
+    gs = gridspec.GridSpec(3, 4, figure=fig, hspace=0.48, wspace=0.35)
+
+    # 1. Events per year
+    ax = fig.add_subplot(gs[0, :2])
+    if "Year" in df.columns:
+        yearly = df.groupby("Year").size().reset_index(name="Events")
+        ax.bar(yearly["Year"], yearly["Events"], color="#1976D2", alpha=0.85, width=0.8)
+        ax.set_title("Flood Events per Year"); ax.set_xlabel("Year"); ax.set_ylabel("Count")
+        ax.tick_params(axis="x", rotation=45)
+
+    # 2. Cluster pie (rule-based tiers from assign_clusters)
+    ax = fig.add_subplot(gs[0, 2])
+    if "Cluster" in df.columns:
+        cc = df["Cluster"].value_counts()
+        colors = [PALETTE.get(c, "#9E9E9E") for c in cc.index]
+        ax.pie(cc, labels=cc.index, colors=colors, autopct="%1.1f%%", startangle=140)
+        ax.set_title("Spatiotemporal Tier Distribution")
+
+    # 3. Monthly seasonality
+    ax = fig.add_subplot(gs[0, 3])
+    if "Start Date" in df.columns:
+        month = df["Start Date"].dt.month
+        monthly = month.value_counts()
+        month_labels = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        ax.bar(range(1, 13), [monthly.get(m, 0) for m in range(1, 13)],
+               color="#F57C00", edgecolor="white", alpha=0.9)
+        ax.set_xticks(range(1, 13)); ax.set_xticklabels(month_labels, fontsize=7)
+        ax.set_title("Monthly Seasonality")
+        ax.set_xlabel("Month"); ax.set_ylabel("Events")
+
+    # 4. Main causes
+    ax = fig.add_subplot(gs[1, :2])
+    if "Main Cause" in df.columns:
+        causes = df["Main Cause"].value_counts().head(8)
+        ax.barh(causes.index[::-1], causes.values[::-1], color="#7B1FA2", alpha=0.85)
+        ax.set_title("Main Causes (Top 8)"); ax.set_xlabel("Events")
+        ax.tick_params(axis="y", labelsize=7)
+
+    # 5. Area vs duration
+    ax = fig.add_subplot(gs[1, 2:])
+    if "area_km2" in df.columns and "Duration (days)" in df.columns:
+        mask = (df["area_km2"] > 0) & df["Duration (days)"].notna()
+        scatter_data = df[mask]
+        ax.scatter(
+            np.log1p(scatter_data["area_km2"]),
+            scatter_data["Duration (days)"],
+            c="#1976D2", alpha=0.35, s=12,
+        )
+        ax.set_title("log(Area km²) vs Duration")
+        ax.set_xlabel("log(Area km²)"); ax.set_ylabel("Duration (days)")
+
+    # 6. Fatalities by severity
+    ax = fig.add_subplot(gs[2, 0])
+    if "Fatalities" in df.columns and "Severity" in df.columns:
+        sub = df[df["Fatalities"] > 0]
+        if not sub.empty:
+            sns.boxplot(data=sub, x="Severity", y="Fatalities", palette="Oranges", ax=ax)
+            ax.set_yscale("log")
+        ax.set_title("Fatalities by Severity (log)")
+
+    # 7. Displaced by severity
+    ax = fig.add_subplot(gs[2, 1])
+    if "Displaced" in df.columns and "Severity" in df.columns:
+        sub = df[df["Displaced"] > 0]
+        if not sub.empty:
+            sns.boxplot(data=sub, x="Severity", y="Displaced", palette="Blues", ax=ax)
+            ax.set_yscale("log")
+        ax.set_title("Displaced by Severity (log)")
+
+    # 8. Geographic scatter (lat/long)
+    ax = fig.add_subplot(gs[2, 2:])
+    if "Latitude" in df.columns and "Longitude" in df.columns:
+        geo = df[["Latitude", "Longitude"]].dropna()
+        ax.scatter(geo["Longitude"], geo["Latitude"], c="#0288D1", alpha=0.4, s=10)
+        ax.set_title("Event Locations (lat/long)")
+        ax.set_xlabel("Longitude"); ax.set_ylabel("Latitude")
+
+    out = OUTPUT_DIR / "xlsx_overview.png"
+    plt.savefig(out, dpi=150, bbox_inches="tight")
+    print(f"  → {out}")
+    plt.close()
 
 # ─────────────────────────── COMBINED PLOT ────────────────────────────────────
 
@@ -558,111 +654,98 @@ def is_us_coordinate(lat, lng):
 def mesh_2011_datasets(csv_df, parquet_df, output_path):
     print("Cross-referencing and meshing 2011 datasets...")
     
-    xlsx_df = load_flood_xlsx(CSV_PATH)
-    # 1. Filter both datasets for 2011
-    # (Assuming both dataframes already have a 'Year' column from your script)
+    xlsx_df = load_flood_xlsx(XLSX_PATH)
     csv_2011 = xlsx_df[xlsx_df['Year'] == 2011].copy()
     parquet_2011 = parquet_df[parquet_df['Year'] == 2011].copy()
     
-    # Ensure they are filtered for the US (Adjust if your CSV uses 'Country' column)
     if 'Country' in csv_2011.columns:
         csv_2011 = csv_2011[csv_2011['Country'].str.contains('United States|USA', case=False, na=False)]
 
     meshed_points = []
+    skipped_no_geom = 0
+    skipped_not_us = 0
+    skipped_no_match = 0
 
-    # 2. Iterate through Parquet spatial polygons to find matching CSV event rows
     for p_idx, p_row in parquet_2011.iterrows():
         p_start = pd.to_datetime(p_row['start_date'])
         p_end = pd.to_datetime(p_row['end_date'])
         geom = p_row['geometry']
         if pd.isna(geom):
+            skipped_no_geom += 1        # ← added
             continue
             
         try:
             if isinstance(geom, str):
                 poly = wkt.loads(geom)
             else:
-                poly = wkb.loads(geom) # Parses binary format
-                
+                poly = wkb.loads(geom)
             centroid = poly.centroid
             lat, lng = centroid.y, centroid.x
-            # Skip any flood polygon outside the US
             if not is_us_coordinate(lat, lng):
+                skipped_not_us += 1     # ← added
                 continue
         except Exception as e:
-            # Print only once to avoid spamming the terminal
             if len(meshed_points) == 0: 
                 print(f"⚠️ Geometry parsing error preview: {e}")
             continue 
             
-        # --- WIDENED TEMPORAL MATCH (4 days) ---
-        # Satellite data (Parquet) and human reports (CSV) rarely share exact start dates.
-        # Expanding the buffer to +/- 4 days catches overlapping events much better.
         time_match = csv_2011[
             (pd.to_datetime(csv_2011['Start Date']) <= p_end + pd.Timedelta(days=4)) &
             (pd.to_datetime(csv_2011['End Date']) >= p_start - pd.Timedelta(days=4))
         ]
-        # FIX: If it doesn't match a US CSV record, skip it entirely 
-        # This keeps foreign data points from leaking onto your map
         if time_match.empty:
+            skipped_no_match += 1       # ← added
             continue
         
         warnings = []
-        has_match = False
-        csv_details = {}
+        match_row = time_match.iloc[0]
+        matched_event_id = str(match_row.name)   # match_row's original DataFrame index — unique per XLSX event
         
-        if not time_match.empty:
-            # Match found! Take the closest or first matching event record
-            match_row = time_match.iloc[0]
-            has_match = True
+        p_dur = p_row['Duration (days)']
+        c_dur = match_row['Duration (days)']
+        if abs(p_dur - c_dur) > 2:
+            warnings.append(f"Duration mismatch: Parquet reports {p_dur} days, CSV reports {c_dur} days.")
             
-            # Cross-reference shared parameters for verification warnings
-            # Check 1: Duration Discrepancy
-            p_dur = p_row['Duration (days)']
-            c_dur = match_row['Duration (days)']
-            if abs(p_dur - c_dur) > 2:
-                warnings.append(f"Duration mismatch: Parquet reports {p_dur} days, CSV reports {c_dur} days.")
-                
-            # Check 2: Area Discrepancy
-            p_area = p_row['area_km2']
-            c_area = match_row['area_km2']
-            if c_area > 0 and (abs(p_area - c_area) / c_area) > 0.5:
-                warnings.append(f"Significant footprint area discrepancy detected.")
-                
-            # Collect human impact metrics unique to the CSV file
-            csv_details = {
-                "main_cause": str(match_row.get("Main Cause", "Unknown")),
-                "fatalities": int(match_row.get("Fatalities", 0)),
-                "displaced": int(match_row.get("Displaced", 0)),
-                "severity": float(match_row.get("Severity", 0.0))
-            }
+        p_area = p_row['area_km2']
+        c_area = match_row['area_km2']
+        if c_area > 0 and (abs(p_area - c_area) / c_area) > 0.5:
+            warnings.append("Significant footprint area discrepancy detected.")
 
-        # 3. Consolidate into a unified object matching React's schema
         unified_point = {
             "id": str(p_row.get("uuid", p_idx)),
             "name": f"Flood Event {p_idx}",
             "lat": float(lat),
             "lng": float(lng),
-            "city": str(match_row.get("City", "Regional Tracker")) if has_match else "Unmapped Region",
-            "state": str(match_row.get("State", "USA")) if has_match else "USA",
+            "city": str(match_row.get("City", "Regional Tracker")),
+            "state": str(match_row.get("State", "USA")),
             "source_flags": {
                 "in_parquet": True,
-                "in_csv": has_match,
+                "in_csv": True,
                 "warnings": warnings
             },
             "metrics": {
                 "parquet_area_km2": float(p_row['area_km2']),
-                "csv_area_km2": float(match_row['area_km2']) if has_match else None,
+                "csv_area_km2": float(match_row['area_km2']),
                 "parquet_duration_days": int(p_row['Duration (days)']),
-                "csv_duration_days": int(match_row['Duration (days)']) if has_match else None,
-                "fatalities": csv_details.get("fatalities", None),
-                "displaced": csv_details.get("displaced", None),
-                "cluster_tier": str(p_row['Cluster'])
+                "csv_duration_days": int(match_row['Duration (days)']),
+                "fatalities": int(match_row.get("Fatalities", 0)),
+                "displaced": int(match_row.get("Displaced", 0)),
+                "cluster_tier": str(p_row['Cluster']),
+                "matched_event_id": matched_event_id,
             }
         }
         meshed_points.append(unified_point)
+        
+    total_scanned = skipped_no_geom + skipped_not_us + skipped_no_match + len(meshed_points)
+    print(f"\n  Parquet points in US, 2011: {total_scanned:,} total scanned")
+    print(f"    Skipped (no geometry): {skipped_no_geom:,}")
+    print(f"    Skipped (outside US): {skipped_not_us:,}")
+    print(f"    Skipped (no XLSX match within ±4 days): {skipped_no_match:,}")
+    print(f"    Matched and included: {len(meshed_points):,}")
+    denom = skipped_no_match + len(meshed_points)
+    if denom > 0:
+        print(f"    True match rate (of geometry-valid US Parquet points): {100*len(meshed_points)/denom:.1f}%")
 
-    # Export out the compiled list
     with open(output_path, "w") as f:
         json.dump(meshed_points, f, indent=2)
     print(f"✓ Created unified dataset with {len(meshed_points)} events written to {output_path}")
@@ -702,6 +785,18 @@ def main():
     else:
         print(f"[!] CSV not found at {CSV_PATH}")
 
+    # ── XLSX ─────────────────────────────────────────────────────────────────────
+    xlsx_df = None
+    if Path(XLSX_PATH).exists():
+        xlsx_df = load_flood_xlsx(XLSX_PATH)
+        xlsx_df = assign_clusters(xlsx_df)
+        print_summary(xlsx_df, "Global Flood Records (XLSX)")
+        print("\n  Generating XLSX charts…")
+        plot_xlsx_overview(xlsx_df)
+    else:
+        print(f"[!] XLSX not found at {XLSX_PATH}")
+    print(xlsx_df[xlsx_df['Country'].str.contains('United States|USA', case=False, na=False)]['Year'].value_counts().sort_index())
+
     # ── Parquet ────────────────────────────────────────────────────────────────
     parquet_df = None
     REACT_CSV_OUTPUT     = BASE_DIR / "react-app" / "src" / "data" / "points_csv.json"
@@ -717,7 +812,7 @@ def main():
         print("    Download from: https://doi.org/10.5281/zenodo.18647053")
 
     # ── Combined ───────────────────────────────────────────────────────────────
-    if csv_df is not None and parquet_df is not None:
+    if xlsx_df is not None and parquet_df is not None:
         # 1. Use BASE_DIR to navigate into the Frontend folder dynamically
         # (This assumes Processing.py is in the 'Map_Visualization' folder alongside 'Frontend')
         PROJECT_ROOT = BASE_DIR.parent
@@ -728,9 +823,9 @@ def main():
         UNIFIED_2011_OUTPUT = REACT_DATA_DIR / "points_2011.json"
 
         # 3. Run the export
-        mesh_2011_datasets(csv_df, parquet_df, UNIFIED_2011_OUTPUT)
+        mesh_2011_datasets(xlsx_df, parquet_df, UNIFIED_2011_OUTPUT)
         print("\n  Generating combined comparison chart…")
-        plot_combined_comparison(csv_df, parquet_df)
+        plot_combined_comparison(xlsx_df, parquet_df)
 
     print(f"\n✓ Outputs saved to: {OUTPUT_DIR.resolve()}")
     print("=" * 60)

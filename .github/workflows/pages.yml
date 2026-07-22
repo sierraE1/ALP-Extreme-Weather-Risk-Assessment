@@ -34,14 +34,6 @@ jobs:
       - name: Install Python dependencies
         run: python -m pip install --upgrade pip pandas pyarrow shapely
 
-      - name: Export parquet data for the dashboard
-        run: |
-          python Map_Visualization/Backend/export_parquet_to_json.py \
-            --input Data_Cleaning/groundsource_2026.parquet \
-            --output Map_Visualization/Frontend/public/data/events.geojson \
-            --us-only \
-            --limit 5000
-
       - name: Install frontend dependencies
         working-directory: Map_Visualization/Frontend
         run: npm install

@@ -1,0 +1,19 @@
+# Ignore data files
+*.parquet
+
+# Ignore environment
+venv/
+.env
+
+# Ignore caches
+__pycache__/
+
+dist/
+
+# Ignore frontend generated artifacts
+Map_Visualization/Frontend/node_modules/
+Map_Visualization/Frontend/dist/
+Map_Visualization/Frontend/*.tsbuildinfo
+Map_Visualization/Frontend/vite.config.js
+Map_Visualization/Frontend/src/data/points_all_years.json
+Map_Visualization/Frontend/public/data/points_all_years.json
